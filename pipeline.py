@@ -1,5 +1,5 @@
 # pip install chromadb sentence-transformers numpy
-# python pipeline.py serve
+# python pipeline.py
 
 import json
 import os
@@ -7,10 +7,6 @@ import argparse
 import chromadb
 from chromadb.utils import embedding_functions
 import numpy as np
-import threading
-import http.server
-import socketserver
-import webbrowser
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INPUT_FILE = os.path.join(BASE_DIR, "NESTLE GREEK NEW TESTAMENT 1904.json")
@@ -33,7 +29,6 @@ def build_vector_db():
     client = chromadb.PersistentClient(path=DB_PATH)
     embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
 
-    # Create collection (re-creates if exists to ensure clean start)
     try:
         client.delete_collection(name="bible_verses")
     except:
@@ -91,7 +86,6 @@ def generate_proximity_map():
         if not build_vector_db():
             return False
     
-    # Double check DB exists if map was missing
     if not os.path.exists(DB_PATH):
         print("[Error] Database path missing despite build attempt.")
         return False
@@ -119,7 +113,6 @@ def generate_proximity_map():
         current_book = current_meta['book']
         current_vec = embeddings[i]
 
-        # Vectorized Cosine Similarity
         dot_products = np.dot(embeddings, current_vec)
         norms = np.linalg.norm(embeddings, axis=1) * np.linalg.norm(current_vec)
         similarities = dot_products / norms
@@ -158,20 +151,42 @@ def generate_proximity_map():
     return True
 
 def write_html_file():
-    """Phase 3: Generate the index.html file automatically."""
-    # Check dependencies for HTML
+    """Phase 3: Generate JS data files and an HTML file that loads them as scripts."""
     if not os.path.exists(OUTPUT_MAP_FILE):
         print("[System] Proximity map missing. Generating map...")
         if not generate_proximity_map():
             return False
 
-    print(f"Generating {HTML_OUTPUT_FILE}...")
+    print(f"Generating assets if needed...")
+
+    try:
+        with open("NESTLE GREEK NEW TESTAMENT 1904.json", 'r', encoding='utf-8') as f:
+            bible_content = f.read()
+        with open(os.path.join(BASE_DIR, "bible_data.js"), 'w', encoding='utf-8') as f:
+            f.write(f"const bibleData = {bible_content};")
+        print("Created bible_data.js")
+    except Exception as e:
+        print(f"Error creating bible_data.js: {e}")
+        return False
+
+    try:
+        with open(OUTPUT_MAP_FILE, 'r', encoding='utf-8') as f:
+            map_content = f.read()
+        with open(os.path.join(BASE_DIR, "map_data.js"), 'w', encoding='utf-8') as f:
+            f.write(f"const connections = {map_content};")
+        print("Created map_data.js")
+    except Exception as e:
+        print(f"Error creating map_data.js: {e}")
+        return False
+
     html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Bible Semantic Proximity Map</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="bible_data.js"></script>
+    <script src="map_data.js"></script>
     <style>
         body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
         #controls { position: absolute; top: 10px; left: 10px; background: rgba(20,20,20,0.85); padding: 15px; border-radius: 8px; z-index: 10; width: 220px; border: 1px solid #333; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
@@ -190,30 +205,27 @@ def write_html_file():
 <div id="controls">
     <label>Filter Book</label>
     <select id="bookFilter"><option value="all">All Books</option></select>
-    <div id="bookStats"></div>
+    <div id="bookStats"></div >
     <br>
     <label>Connections (K)</label>
     <input type="number" id="kFilter" value="3" min="1" max="50">
-</div>
-<div id="report"><div id="reportContent">Loading semantic data...</div></div>
+</div >
+<div id="report"><div id="reportContent">Loading semantic data...</div ></div >
 <canvas id="viz"></canvas>
+
 <script>
 let width, height, centerX, centerY;
 const canvas = document.getElementById('viz');
 const ctx = canvas.getContext('2d');
-let bibleData, connections, nodes = [], nodeMap = new Map(), filteredConnections = [];
+let nodes = [], nodeMap = new Map(), filteredConnections = [];
 let selectedBook = 'all', topK = 3;
 
-Promise.all([
-    d3.json('NESTLE GREEK NEW TESTAMENT 1904.json'),
-    d3.json('BookChapterVerseMap.json')
-]).then(([bData, cData]) => {
-    bibleData = bData;
-    connections = cData;
-    init();
-}).catch(err => console.error("Error loading JSON: Ensure JSON files are in the same folder as this HTML.", err));
-
 function init() {
+    if (typeof bibleData === 'undefined' || typeof connections === 'undefined') {
+        document.getElementById('reportContent').innerHTML = "Error: Data files not found. Ensure .js files are in the same folder.";
+        return;
+    }
+
     const books = Object.keys(bibleData);
     const bookList = d3.select("#bookFilter");
     books.forEach(book => {
@@ -372,9 +384,12 @@ function generateReport(currentSet) {
     }
     reportDiv.innerHTML = html;
 }
+
+init();
 </script>
 </body>
 </html>"""
+
     with open(HTML_OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(html_content)
     print(f"HTML file generated: {HTML_OUTPUT_FILE}")
@@ -385,10 +400,8 @@ function generateReport(currentSet) {
 # ==========================================
 def main():
     parser = argparse.ArgumentParser(description="Bible Semantic Proximity Pipeline")
-    parser.add_argument("action", choices=["build", "map", "html", "serve"], 
-                        help="build: Create DB, map: Create proximity JSON, "
-                             "html: Generate index.html, serve: Start server and open browser")
-    
+    parser.add_argument("action", nargs='?', default="html", choices=["build", "map", "html"], 
+                        help="build: Create DB, map: Create proximity JSON, html: Generate index.html (default)")
     args = parser.parse_args()
 
     if args.action == "build":
@@ -396,33 +409,9 @@ def main():
     elif args.action == "map":
         generate_proximity_map()
     elif args.action == "html":
-        write_html_file()
-    elif args.action == "serve":
         if not write_html_file():
-            print("[Error] Failed to generate required files for serving.")
+            print("[Error] Failed to generate required files.")
             return
-
-        PORT = 8000
-        Handler = http.server.SimpleHTTPRequestHandler
-
-        def run_server():
-            socketserver.TCPServer.allow_reuse_address = True
-            with socketserver.TCPServer(("", PORT), Handler) as httpd:
-                print(f"\n[Server] Serving at http://localhost:{PORT}")
-                print("[Server] Press Ctrl+C to stop the server.")
-                httpd.serve_forever()
-
-        server_thread = threading.Thread(target=run_server, daemon=True)
-        server_thread.start()
-
-        print(f"[Browser] Opening index.html...")
-        webbrowser.open(f"http://localhost:{PORT}/index.html")
-
-        try:
-            while True:
-                server_thread.join(timeout=1.0)
-        except KeyboardInterrupt:
-            print("\n[System] Stopping server...")
 
 if __name__ == "__main__":
     main()

@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <title>Bible Semantic Proximity Map</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="bible_data.js"></script>
+    <script src="map_data.js"></script>
     <style>
         body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
         #controls { position: absolute; top: 10px; left: 10px; background: rgba(20,20,20,0.85); padding: 15px; border-radius: 8px; z-index: 10; width: 220px; border: 1px solid #333; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
@@ -22,30 +24,27 @@
 <div id="controls">
     <label>Filter Book</label>
     <select id="bookFilter"><option value="all">All Books</option></select>
-    <div id="bookStats"></div>
+    <div id="bookStats"></div >
     <br>
     <label>Connections (K)</label>
     <input type="number" id="kFilter" value="3" min="1" max="50">
-</div>
-<div id="report"><div id="reportContent">Loading semantic data...</div></div>
+</div >
+<div id="report"><div id="reportContent">Loading semantic data...</div ></div >
 <canvas id="viz"></canvas>
+
 <script>
 let width, height, centerX, centerY;
 const canvas = document.getElementById('viz');
 const ctx = canvas.getContext('2d');
-let bibleData, connections, nodes = [], nodeMap = new Map(), filteredConnections = [];
+let nodes = [], nodeMap = new Map(), filteredConnections = [];
 let selectedBook = 'all', topK = 3;
 
-Promise.all([
-    d3.json('NESTLE GREEK NEW TESTAMENT 1904.json'),
-    d3.json('BookChapterVerseMap.json')
-]).then(([bData, cData]) => {
-    bibleData = bData;
-    connections = cData;
-    init();
-}).catch(err => console.error("Error loading JSON: Ensure JSON files are in the same folder as this HTML.", err));
-
 function init() {
+    if (typeof bibleData === 'undefined' || typeof connections === 'undefined') {
+        document.getElementById('reportContent').innerHTML = "Error: Data files not found. Ensure .js files are in the same folder.";
+        return;
+    }
+
     const books = Object.keys(bibleData);
     const bookList = d3.select("#bookFilter");
     books.forEach(book => {
@@ -204,6 +203,8 @@ function generateReport(currentSet) {
     }
     reportDiv.innerHTML = html;
 }
+
+init();
 </script>
 </body>
 </html>
