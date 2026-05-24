@@ -35,7 +35,7 @@ def build_vector_db():
         embedding_function=embedding_fn
     )
 
-    print(f"Loading {INPUT_FILE}...")
+    print(f"Loading {INPUT_FILE}")
     try:
         with open(INPUT_FILE, 'r', encoding='utf-8') as f:
             bible_data = json.load(f)
@@ -45,7 +45,7 @@ def build_vector_db():
 
     ids, documents, metadatas = [], [], []
 
-    print("Parsing JSON and preparing vectors...")
+    print("Parsing JSON and preparing vectors")
     for book, chapters in bible_data.items():
         for chapter_num, verses in chapters.items():
             # First, collect all verse data for this chapter
@@ -79,7 +79,7 @@ def build_vector_db():
 
     batch_size = 500
     total_entries = len(ids)
-    print(f"Starting ingestion of {total_entries} entries (verses + chapters) into {DB_PATH}...")
+    print(f"Starting ingestion of {total_entries} entries (verses + chapters) into {DB_PATH}")
 
     for i in range(0, total_entries, batch_size):
         end_idx = min(i + batch_size, total_entries)
@@ -96,7 +96,7 @@ def build_vector_db():
 def generate_proximity_map():
     """Phase 2: Calculate semantic similarities and save to JSON."""
     if not os.path.exists(DB_PATH):
-        print(f"[System] Database not found. Triggering build...")
+        print(f"[System] Database not found. Triggering build")
         if not build_vector_db():
             return False
     
@@ -104,7 +104,7 @@ def generate_proximity_map():
     client = chromadb.PersistentClient(path=DB_PATH)
     collection = client.get_collection(name="bible_verses")
 
-    print("Gathering all metadata and embeddings into memory...")
+    print("Gathering all metadata and embeddings into memory")
     all_data = collection.get(include=['embeddings', 'metadatas'])
     
     ids = all_data['ids']
@@ -113,7 +113,7 @@ def generate_proximity_map():
     total_entries = len(ids)
 
     print(f"Total entries: {total_entries}")
-    print(f"Calculating top {TOP_K} cross-book relations per entry...")
+    print(f"Calculating top {TOP_K} cross-book relations per entry")
 
     connections = []
     
@@ -155,9 +155,9 @@ def generate_proximity_map():
             found_count += 1
 
         if i % 500 == 0:
-            print(f"Processed {i}/{total_entries} entries...")
+            print(f"Processed {i}/{total_entries} entries")
 
-    print(f"Writing {len(connections)} connections to {OUTPUT_MAP_FILE}...")
+    print(f"Writing {len(connections)} connections to {OUTPUT_MAP_FILE}")
     os.makedirs(os.path.dirname(OUTPUT_MAP_FILE), exist_ok=True)
     with open(OUTPUT_MAP_FILE, 'w', encoding='utf-8') as f:
         json.dump(connections, f)
@@ -168,11 +168,11 @@ def generate_proximity_map():
 def write_html_file():
     """Phase 3: Generate JS data files and an HTML file that loads them as scripts."""
     if not os.path.exists(OUTPUT_MAP_FILE):
-        print("[System] Proximity map missing. Generating map...")
+        print("[System] Proximity map missing. Generating map")
         if not generate_proximity_map():
             return False
 
-    print(f"Generating assets if needed...")
+    print(f"Generating assets if needed")
 
     try:
         with open("NESTLE GREEK NEW TESTAMENT 1904.json", 'r', encoding='utf-8') as f:
@@ -209,23 +209,37 @@ def write_html_file():
         canvas { cursor: crosshair; display: block; }
         select, input { background: #222; color: #fff; border: 1px solid #444; padding: 6px; margin: 8px 0; width: 100%; border-radius: 4px; }
         .stat { font-weight: bold; color: #00d4ff; }
-        .verse-text { font-style: italic; color: #eee; line-height: 1.4; display: block; margin: 5px 0; font-size: 0.9em; }
+        .verse-text { font-style: italic; color: #eee; line-height: 1.4; display: block; margin: 5px 0; font-size: 0.9em; white-space: pre-wrap; }
         .sim-label { color: #00d4ff; font-size: 0.85em; font-weight: bold; }
         .line-count { color: #00d4ff; font-weight: bold; margin-bottom: 10px; display: block; }
         hr { border: 0; border-top: 1px solid #333; margin: 10px 0; }
         label { font-size: 0.85em; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 <div id="controls">
     <label>Filter Book</label>
     <select id="bookFilter"><option value="all">All Books</option></select>
+    
+    <div id="drilldownContainer" class="hidden">
+        <label>Drill Down: Chapter</label>
+        <select id="chapterFilter"><option value="all">All Chapters</option></select>
+    </div >
+
     <div id="bookStats"></div >
-    <br>
+    <hr>
+    <label>View Mode</label>
+    <select id="viewMode">
+        <option value="all">All (Mixed)</option>
+        <option value="chapter">Chapters Only</option>
+        <option value="verse">Verses Only</option>
+    </select>
+    <hr>
     <label>Connections (K)</label>
     <input type="number" id="kFilter" value="3" min="1" max="50">
 </div >
-<div id="report"><div id="reportContent">Loading semantic data...</div ></div >
+<div id="report"><div id="reportContent">Loading semantic data</div ></div >
 <canvas id="viz"></canvas>
 
 <script>
@@ -233,47 +247,93 @@ let width, height, centerX, centerY;
 const canvas = document.getElementById('viz');
 const ctx = canvas.getContext('2d');
 let nodes = [], nodeMap = new Map(), filteredConnections = [];
-let selectedBook = 'all', topK = 3;
+let selectedBook = 'all', selectedChapter = 'all', viewMode = 'all', topK = 3;
 
 function init() {
     if (typeof bibleData === 'undefined' || typeof connections === 'undefined') {
-        document.getElementById('reportContent').innerHTML = "Error: Data files not found. Ensure .js files are in the same folder.";
+        document.getElementById('reportContent').innerHTML = "Error: Data files not found.";
         return;
     }
 
     const books = Object.keys(bibleData);
     const bookList = d3.select("#bookFilter");
+    const chapterList = d3.select("#chapterFilter");
+    const drilldownContainer = document.getElementById('drilldownContainer');
+
     books.forEach(book => {
         bookList.append("option").attr("value", book).text(book);
+        
         const chapters = Object.keys(bibleData[book]);
         chapters.forEach(ch => {
-            // Add Chapter Node to the visual graph
+            const chapterVerses = bibleData[book][ch];
+            const chapterFullText = Object.values(chapterVerses).join(" ");
+
             const chapterId = `${book}_${ch}`;
             const chapterNode = { 
                 id: chapterId, 
                 book, 
                 chapter: ch, 
                 type: 'chapter', 
-                text: `Chapter ${ch} Summary` 
+                text: chapterFullText 
             };
             nodes.push(chapterNode);
             nodeMap.set(chapterId, chapterNode);
 
-            const verses = Object.keys(bibleData[book][ch]);
+            const verses = Object.keys(chapterVerses);
             verses.forEach(vs => {
                 const id = `${book}_${ch}_${vs}`;
-                const node = { id, book, chapter: ch, verse: vs, text: bibleData[book][ch][vs], type: 'verse' };
+                const node = { id, book, chapter: ch, verse: vs, text: chapterVerses[vs], type: 'verse' };
                 nodes.push(node);
                 nodeMap.set(id, node);
             });
         });
     });
+
+    d3.select("#bookFilter").on("change", function() { 
+        selectedBook = this.value; 
+        updateChapterDropdown();
+        updateStats(); 
+        updateViz(); 
+    });
+
+    d3.select("#chapterFilter").on("change", function() {
+        selectedChapter = this.value;
+        updateViz();
+    });
+
+    d3.select("#viewMode").on("change", function() {
+        viewMode = this.value;
+        updateViz();
+    });
+
+    d3.select("#kFilter").on("input", function() { 
+        topK = parseInt(this.value) || 1; 
+        updateViz(); 
+    });
+
     window.addEventListener('resize', resize);
     resize();
-    d3.select("#bookFilter").on("change", function() { selectedBook = this.value; updateStats(); updateViz(); });
-    d3.select("#kFilter").on("input", function() { topK = parseInt(this.value) || 1; updateViz(); });
+    updateChapterDropdown();
     updateStats();
     updateViz();
+}
+
+function updateChapterDropdown() {
+    const chapterList = d3.select("#chapterFilter");
+    const drilldownContainer = document.getElementById('drilldownContainer');
+    chapterList.html('<option value="all">All Chapters</option>');
+    
+    if (selectedBook === 'all') {
+        drilldownContainer.classList.add('hidden');
+        selectedChapter = 'all';
+    } else {
+        drilldownContainer.classList.remove('hidden');
+        selectedChapter = 'all';
+        const chapters = Object.keys(bibleData[selectedBook]);
+        chapters.forEach(ch => {
+            chapterList.append("option").attr("value", ch).text(`Chapter ${ch}`);
+        });
+    }
 }
 
 function resize() {
@@ -299,12 +359,14 @@ function updateViz() {
     ctx.clearRect(0, 0, width, height);
     const radiusLimit = Math.min(width, height) * 0.42;
     const books = Object.keys(bibleData);
+    
     const bookStats = books.map(book => {
         let count = 0;
         const chapters = bibleData[book];
         Object.values(chapters).forEach(ch => count += Object.keys(ch).length);
         return { name: book, verseCount: count };
     });
+    
     const minVerses = Math.min(...bookStats.map(b => b.verseCount));
     let bookSpokeData = [];
     let totalSpokeCount = 0;
@@ -313,6 +375,7 @@ function updateViz() {
         bookSpokeData.push({ name: stat.name, spokeCount: spokesNeeded, verseCount: stat.verseCount, color: (bookSpokeData.length % 2 === 0) ? "#00d4ff" : "#ffea00" });
         totalSpokeCount += spokesNeeded;
     });
+
     const spokeAngleStep = (Math.PI * 2) / totalSpokeCount;
     const NUM_RINGS = minVerses; 
     const minRadius = radiusLimit * 0.2; 
@@ -327,12 +390,11 @@ function updateViz() {
         if (!bData) return;
         
         let vIdxInBook;
+        const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
+        
         if (n.type === 'verse') {
-            const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
             vIdxInBook = bookVerses.findIndex(v => v.id === n.id);
         } else {
-            // Chapter nodes are placed at the position of the first verse of that chapter
-            const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
             const firstVerse = bookVerses.find(v => v.chapter === n.chapter);
             vIdxInBook = bookVerses.indexOf(firstVerse);
         }
@@ -347,15 +409,23 @@ function updateViz() {
         n.bookColor = bData.color;
     });
 
+    const visibleNodes = nodes.filter(n => {
+        const bookMatch = (selectedBook === 'all' || n.book === selectedBook);
+        const chapterMatch = (selectedChapter === 'all' || n.chapter === selectedChapter);
+        let typeMatch = true;
+        if (viewMode === 'chapter') typeMatch = (n.type === 'chapter');
+        else if (viewMode === 'verse') typeMatch = (n.type === 'verse');
+        
+        return bookMatch && chapterMatch && typeMatch;
+    });
+
+    const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
+
     let validConnections = [];
     const connectionCountPerVerse = new Map();
     for (let i = 0; i < connections.length; i++) {
         const c = connections[i];
-        const sourceNode = nodeMap.get(c.s);
-        const targetNode = nodeMap.get(c.t);
-        if (!sourceNode || !targetNode) continue;
-        const involvesSelectedBook = (selectedBook === 'all') || (sourceNode.book === selectedBook || targetNode.book === selectedBook);
-        if (involvesSelectedBook) {
+        if (visibleNodeIds.has(c.s) && visibleNodeIds.has(c.t)) {
             const sCount = connectionCountPerVerse.get(c.s) || 0;
             const tCount = connectionCountPerVerse.get(c.t) || 0;
             if (sCount < topK && tCount < topK) {
@@ -378,18 +448,16 @@ function updateViz() {
         });
     }
 
-    nodes.forEach(n => {
-        if (selectedBook === 'all' || n.book === selectedBook) {
-            ctx.beginPath(); 
-            if (n.type === 'chapter') {
-                ctx.arc(n.x, n.y, 2.5, 0, Math.PI * 2);
-                ctx.fillStyle = "#ff00ff"; 
-            } else {
-                ctx.arc(n.x, n.y, 0.9, 0, Math.PI * 2);
-                ctx.fillStyle = n.bookColor || "#ffffff"; 
-            }
-            ctx.fill();
+    visibleNodes.forEach(n => {
+        ctx.beginPath(); 
+        if (n.type === 'chapter') {
+            ctx.arc(n.x, n.y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = "#ff00ff"; 
+        } else {
+            ctx.arc(n.x, n.y, 1, 0, Math.PI * 2);
+            ctx.fillStyle = n.bookColor || "#ffffff"; 
         }
+        ctx.fill();
     });
 
     ctx.font = "bold 11px Arial"; ctx.textAlign = "center";
@@ -403,6 +471,7 @@ function updateViz() {
         ctx.fillStyle = b.color; ctx.fillText(b.name.toUpperCase(), lx, ly);
         runningSpokeCount += b.spokeCount;
     });
+
     generateReport(validConnections);
 }
 
@@ -420,15 +489,7 @@ function generateReport(currentSet) {
         const t = nodeMap.get(c.t);
         const sLabel = s.type === 'chapter' ? `Chapter ${s.chapter}` : `${s.chapter}:${s.verse}`;
         const tLabel = t.type === 'chapter' ? `Chapter ${t.chapter}` : `${t.chapter}:${t.verse}`;
-        html += `<div style="margin-bottom: 10px;"><span class="sim-label">Similarity: ${c.sim}</span><br><span class="verse-text">"${s.text.substring(0, 200)}..."</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${t.text.substring(0, 200)}..."</span><small style="color:#666;">${s.book} ${sLabel} ? ${t.book} ${tLabel}</small></div><hr>`;
-    }
-    const least = filteredAndSorted[filteredAndSorted.length - 1];
-    if (least) {
-        const ls = nodeMap.get(least.s);
-        const lt = nodeMap.get(least.t);
-        const lsLabel = ls.type === 'chapter' ? `Chapter ${ls.chapter}` : `${ls.chapter}:${ls.verse}`;
-        const ltLabel = lt.type === 'chapter' ? `Chapter ${lt.chapter}` : `${lt.chapter}:${lt.verse}`;
-        html += `<div style="color: #ff4444; font-size: 0.8em; margin-top: 10px; text-transform: uppercase;">Least Similar Pair</div><span class="sim-label" style="color:#ff4444">Similarity: ${least.sim}</span><br><span class="verse-text">"${ls.text.substring(0, 200)}..."</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${lt.text.substring(0, 200)}..."</span><small style="color:#666;">${ls.book} ${lsLabel} ? ${lt.book} ${ltLabel}</small>`;
+        html += `<div style="margin-bottom: 10px;"><span class="sim-label">Similarity: ${c.sim}</span><br><span class="verse-text">${s.text}</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">${t.text}</span><small style="color:#666;">${s.book} ${sLabel} ? ${t.book} ${tLabel}</small></div><hr>`;
     }
     reportDiv.innerHTML = html;
 }
