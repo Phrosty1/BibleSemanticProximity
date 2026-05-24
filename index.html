@@ -51,10 +51,22 @@ function init() {
         bookList.append("option").attr("value", book).text(book);
         const chapters = Object.keys(bibleData[book]);
         chapters.forEach(ch => {
+            // Add Chapter Node to the visual graph
+            const chapterId = `${book}_${ch}`;
+            const chapterNode = { 
+                id: chapterId, 
+                book, 
+                chapter: ch, 
+                type: 'chapter', 
+                text: `Chapter ${ch} Summary` 
+            };
+            nodes.push(chapterNode);
+            nodeMap.set(chapterId, chapterNode);
+
             const verses = Object.keys(bibleData[book][ch]);
             verses.forEach(vs => {
                 const id = `${book}_${ch}_${vs}`;
-                const node = { id, book, chapter: ch, verse: vs, text: bibleData[book][ch][vs] };
+                const node = { id, book, chapter: ch, verse: vs, text: bibleData[book][ch][vs], type: 'verse' };
                 nodes.push(node);
                 nodeMap.set(id, node);
             });
@@ -117,8 +129,18 @@ function updateViz() {
     nodes.forEach(n => {
         const bData = bookSpokeData.find(b => b.name === n.book);
         if (!bData) return;
-        const bookVerses = bookNodeGroups.get(n.book);
-        const vIdxInBook = bookVerses.findIndex(v => v.id === n.id);
+        
+        let vIdxInBook;
+        if (n.type === 'verse') {
+            const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
+            vIdxInBook = bookVerses.findIndex(v => v.id === n.id);
+        } else {
+            // Chapter nodes are placed at the position of the first verse of that chapter
+            const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
+            const firstVerse = bookVerses.find(v => v.chapter === n.chapter);
+            vIdxInBook = bookVerses.indexOf(firstVerse);
+        }
+
         const spokeWithinBook = vIdxInBook % bData.spokeCount;
         const globalSpokeIndex = bookSpokeOffsets.get(n.book) + spokeWithinBook;
         const angle = globalSpokeIndex * spokeAngleStep;
@@ -162,8 +184,15 @@ function updateViz() {
 
     nodes.forEach(n => {
         if (selectedBook === 'all' || n.book === selectedBook) {
-            ctx.beginPath(); ctx.arc(n.x, n.y, 0.9, 0, Math.PI * 2);
-            ctx.fillStyle = n.bookColor || "#ffffff"; ctx.fill();
+            ctx.beginPath(); 
+            if (n.type === 'chapter') {
+                ctx.arc(n.x, n.y, 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = "#ff00ff"; 
+            } else {
+                ctx.arc(n.x, n.y, 0.9, 0, Math.PI * 2);
+                ctx.fillStyle = n.bookColor || "#ffffff"; 
+            }
+            ctx.fill();
         }
     });
 
@@ -193,13 +222,17 @@ function generateReport(currentSet) {
         const c = filteredAndSorted[i];
         const s = nodeMap.get(c.s);
         const t = nodeMap.get(c.t);
-        html += `<div style="margin-bottom: 10px;"><span class="sim-label">Similarity: ${c.sim}</span><br><span class="verse-text">"${s.text}"</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${t.text}"</span><small style="color:#666;">${s.book} ${s.chapter}:${s.verse} ? ${t.book} ${t.chapter}:${t.verse}</small></div><hr>`;
+        const sLabel = s.type === 'chapter' ? `Chapter ${s.chapter}` : `${s.chapter}:${s.verse}`;
+        const tLabel = t.type === 'chapter' ? `Chapter ${t.chapter}` : `${t.chapter}:${t.verse}`;
+        html += `<div style="margin-bottom: 10px;"><span class="sim-label">Similarity: ${c.sim}</span><br><span class="verse-text">"${s.text.substring(0, 200)}..."</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${t.text.substring(0, 200)}..."</span><small style="color:#666;">${s.book} ${sLabel} ? ${t.book} ${tLabel}</small></div><hr>`;
     }
     const least = filteredAndSorted[filteredAndSorted.length - 1];
     if (least) {
         const ls = nodeMap.get(least.s);
         const lt = nodeMap.get(least.t);
-        html += `<div style="color: #ff4444; font-size: 0.8em; margin-top: 10px; text-transform: uppercase;">Least Similar Pair</div><span class="sim-label" style="color:#ff4444">Similarity: ${least.sim}</span><br><span class="verse-text">"${ls.text}"</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${lt.text}"</span><small style="color:#666;">${ls.book} ${ls.chapter}:${ls.verse} ? ${lt.book} ${lt.chapter}:${lt.verse}</small>`;
+        const lsLabel = ls.type === 'chapter' ? `Chapter ${ls.chapter}` : `${ls.chapter}:${ls.verse}`;
+        const ltLabel = lt.type === 'chapter' ? `Chapter ${lt.chapter}` : `${lt.chapter}:${lt.verse}`;
+        html += `<div style="color: #ff4444; font-size: 0.8em; margin-top: 10px; text-transform: uppercase;">Least Similar Pair</div><span class="sim-label" style="color:#ff4444">Similarity: ${least.sim}</span><br><span class="verse-text">"${ls.text.substring(0, 200)}..."</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${lt.text.substring(0, 200)}..."</span><small style="color:#666;">${ls.book} ${lsLabel} ? ${lt.book} ${ltLabel}</small>`;
     }
     reportDiv.innerHTML = html;
 }

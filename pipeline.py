@@ -21,10 +21,6 @@ TOP_K = 50
 # ==========================================
 def build_vector_db():
     """Phase 1: Create the ChromaDB vector database."""
-    if os.path.exists(DB_PATH) and os.listdir(DB_PATH):
-        print(f"[System] Vector database already exists at {DB_PATH}.")
-        return True
-
     print(f"--- Starting Build Process ---")
     client = chromadb.PersistentClient(path=DB_PATH)
     embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
@@ -52,6 +48,9 @@ def build_vector_db():
     print("Parsing JSON and preparing vectors...")
     for book, chapters in bible_data.items():
         for chapter_num, verses in chapters.items():
+            # First, collect all verse data for this chapter
+            chapter_text_parts = []
+            
             for verse_num, text in verses.items():
                 verse_id = f"{book}_{chapter_num}_{verse_num}"
                 ids.append(verse_id)
@@ -60,54 +59,65 @@ def build_vector_db():
                     "book": book,
                     "chapter": str(chapter_num),
                     "verse": str(verse_num),
-                    "text": text 
+                    "text": text,
+                    "type": "verse"
                 })
+                chapter_text_parts.append(text)
+            
+            # Second, create the Chapter-level entry by concatenating all verses in this chapter
+            chapter_id = f"{book}_{chapter_num}"
+            chapter_full_text = " ".join(chapter_text_parts)
+            ids.append(chapter_id)
+            documents.append(chapter_full_text)
+            metadatas.append({
+                "book": book,
+                "chapter": str(chapter_num),
+                "verse": "0", # Marker for chapter level
+                "text": chapter_full_text,
+                "type": "chapter"
+            })
 
     batch_size = 500
-    total_verses = len(ids)
-    print(f"Starting ingestion of {total_verses} verses into {DB_PATH}...")
+    total_entries = len(ids)
+    print(f"Starting ingestion of {total_entries} entries (verses + chapters) into {DB_PATH}...")
 
-    for i in range(0, total_verses, batch_size):
-        end_idx = min(i + batch_size, total_verses)
+    for i in range(0, total_entries, batch_size):
+        end_idx = min(i + batch_size, total_entries)
         collection.add(
             ids=ids[i:end_idx],
             documents=documents[i:end_idx],
             metadatas=metadatas[i:end_idx]
         )
-        print(f"Progress: {end_idx}/{total_verses} verses indexed.")
+        print(f"Progress: {end_idx}/{total_entries} entries indexed.")
 
     print("\nSuccess! Vector database created.")
     return True
 
 def generate_proximity_map():
     """Phase 2: Calculate semantic similarities and save to JSON."""
-    if not os.path.exists(OUTPUT_MAP_FILE):
-        print(f"[System] Proximity map not found. Checking database...")
+    if not os.path.exists(DB_PATH):
+        print(f"[System] Database not found. Triggering build...")
         if not build_vector_db():
             return False
     
-    if not os.path.exists(DB_PATH):
-        print("[Error] Database path missing despite build attempt.")
-        return False
-
     print(f"--- Starting Proximity Map Generation ---")
     client = chromadb.PersistentClient(path=DB_PATH)
     collection = client.get_collection(name="bible_verses")
 
-    print("Gathering all verse metadata and embeddings into memory...")
+    print("Gathering all metadata and embeddings into memory...")
     all_data = collection.get(include=['embeddings', 'metadatas'])
     
     ids = all_data['ids']
     embeddings = np.array(all_data['embeddings'])
     metadatas = all_data['metadatas']
-    total_verses = len(ids)
+    total_entries = len(ids)
 
-    print(f"Total verses: {total_verses}")
-    print(f"Calculating top {TOP_K} cross-book relations per verse...")
+    print(f"Total entries: {total_entries}")
+    print(f"Calculating top {TOP_K} cross-book relations per entry...")
 
     connections = []
     
-    for i in range(total_verses):
+    for i in range(total_entries):
         current_id = ids[i]
         current_meta = metadatas[i]
         current_book = current_meta['book']
@@ -123,7 +133,10 @@ def generate_proximity_map():
         for idx in sorted_indices:
             if idx == i: continue
             
-            target_book = metadatas[idx]['book']
+            target_meta = metadatas[idx]
+            target_book = target_meta['book']
+            
+            # We only want cross-book connections
             if target_book == current_book: continue
             if found_count >= TOP_K: break
             
@@ -135,12 +148,14 @@ def generate_proximity_map():
                 "sb": current_book,
                 "t": ids[idx],
                 "tb": target_book,
-                "sim": round(float(sim_score), 4)
+                "sim": round(float(sim_score), 4),
+                "stype": current_meta.get('type', 'verse'),
+                "ttype": target_meta.get('type', 'verse')
             })
             found_count += 1
 
         if i % 500 == 0:
-            print(f"Processed {i}/{total_verses} verses...")
+            print(f"Processed {i}/{total_entries} entries...")
 
     print(f"Writing {len(connections)} connections to {OUTPUT_MAP_FILE}...")
     os.makedirs(os.path.dirname(OUTPUT_MAP_FILE), exist_ok=True)
@@ -232,10 +247,22 @@ function init() {
         bookList.append("option").attr("value", book).text(book);
         const chapters = Object.keys(bibleData[book]);
         chapters.forEach(ch => {
+            // Add Chapter Node to the visual graph
+            const chapterId = `${book}_${ch}`;
+            const chapterNode = { 
+                id: chapterId, 
+                book, 
+                chapter: ch, 
+                type: 'chapter', 
+                text: `Chapter ${ch} Summary` 
+            };
+            nodes.push(chapterNode);
+            nodeMap.set(chapterId, chapterNode);
+
             const verses = Object.keys(bibleData[book][ch]);
             verses.forEach(vs => {
                 const id = `${book}_${ch}_${vs}`;
-                const node = { id, book, chapter: ch, verse: vs, text: bibleData[book][ch][vs] };
+                const node = { id, book, chapter: ch, verse: vs, text: bibleData[book][ch][vs], type: 'verse' };
                 nodes.push(node);
                 nodeMap.set(id, node);
             });
@@ -298,8 +325,18 @@ function updateViz() {
     nodes.forEach(n => {
         const bData = bookSpokeData.find(b => b.name === n.book);
         if (!bData) return;
-        const bookVerses = bookNodeGroups.get(n.book);
-        const vIdxInBook = bookVerses.findIndex(v => v.id === n.id);
+        
+        let vIdxInBook;
+        if (n.type === 'verse') {
+            const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
+            vIdxInBook = bookVerses.findIndex(v => v.id === n.id);
+        } else {
+            // Chapter nodes are placed at the position of the first verse of that chapter
+            const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
+            const firstVerse = bookVerses.find(v => v.chapter === n.chapter);
+            vIdxInBook = bookVerses.indexOf(firstVerse);
+        }
+
         const spokeWithinBook = vIdxInBook % bData.spokeCount;
         const globalSpokeIndex = bookSpokeOffsets.get(n.book) + spokeWithinBook;
         const angle = globalSpokeIndex * spokeAngleStep;
@@ -343,8 +380,15 @@ function updateViz() {
 
     nodes.forEach(n => {
         if (selectedBook === 'all' || n.book === selectedBook) {
-            ctx.beginPath(); ctx.arc(n.x, n.y, 0.9, 0, Math.PI * 2);
-            ctx.fillStyle = n.bookColor || "#ffffff"; ctx.fill();
+            ctx.beginPath(); 
+            if (n.type === 'chapter') {
+                ctx.arc(n.x, n.y, 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = "#ff00ff"; 
+            } else {
+                ctx.arc(n.x, n.y, 0.9, 0, Math.PI * 2);
+                ctx.fillStyle = n.bookColor || "#ffffff"; 
+            }
+            ctx.fill();
         }
     });
 
@@ -374,13 +418,17 @@ function generateReport(currentSet) {
         const c = filteredAndSorted[i];
         const s = nodeMap.get(c.s);
         const t = nodeMap.get(c.t);
-        html += `<div style="margin-bottom: 10px;"><span class="sim-label">Similarity: ${c.sim}</span><br><span class="verse-text">"${s.text}"</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${t.text}"</span><small style="color:#666;">${s.book} ${s.chapter}:${s.verse} ? ${t.book} ${t.chapter}:${t.verse}</small></div><hr>`;
+        const sLabel = s.type === 'chapter' ? `Chapter ${s.chapter}` : `${s.chapter}:${s.verse}`;
+        const tLabel = t.type === 'chapter' ? `Chapter ${t.chapter}` : `${t.chapter}:${t.verse}`;
+        html += `<div style="margin-bottom: 10px;"><span class="sim-label">Similarity: ${c.sim}</span><br><span class="verse-text">"${s.text.substring(0, 200)}..."</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${t.text.substring(0, 200)}..."</span><small style="color:#666;">${s.book} ${sLabel} ? ${t.book} ${tLabel}</small></div><hr>`;
     }
     const least = filteredAndSorted[filteredAndSorted.length - 1];
     if (least) {
         const ls = nodeMap.get(least.s);
         const lt = nodeMap.get(least.t);
-        html += `<div style="color: #ff4444; font-size: 0.8em; margin-top: 10px; text-transform: uppercase;">Least Similar Pair</div><span class="sim-label" style="color:#ff4444">Similarity: ${least.sim}</span><br><span class="verse-text">"${ls.text}"</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${lt.text}"</span><small style="color:#666;">${ls.book} ${ls.chapter}:${ls.verse} ? ${lt.book} ${lt.chapter}:${lt.verse}</small>`;
+        const lsLabel = ls.type === 'chapter' ? `Chapter ${ls.chapter}` : `${ls.chapter}:${ls.verse}`;
+        const ltLabel = lt.type === 'chapter' ? `Chapter ${lt.chapter}` : `${lt.chapter}:${lt.verse}`;
+        html += `<div style="color: #ff4444; font-size: 0.8em; margin-top: 10px; text-transform: uppercase;">Least Similar Pair</div><span class="sim-label" style="color:#ff4444">Similarity: ${least.sim}</span><br><span class="verse-text">"${ls.text.substring(0, 200)}..."</span><div style="text-align:center; color:#444; font-size:0.8em;">?</div><span class="verse-text">"${lt.text.substring(0, 200)}..."</span><small style="color:#666;">${ls.book} ${lsLabel} ? ${lt.book} ${ltLabel}</small>`;
     }
     reportDiv.innerHTML = html;
 }
