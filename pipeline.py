@@ -195,23 +195,52 @@ def write_html_file():
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Bible Semantic Proximity Map</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="bible_data.js"></script>
     <script src="map_data.js"></script>
     <style>
-        body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+        body { 
+            margin: 0; 
+            background: #0a0a0a; 
+            color: #e0e0e0; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            overflow: hidden; 
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100vw;
+        }
         
+        #viz-container {
+            position: relative;
+            flex-grow: 1;
+            width: 100%;
+            overflow: hidden;
+            touch-action: none;
+        }
+
         #controls, #report { 
-            position: absolute; 
-            background: rgba(20,20,20,0.9); 
+            background: rgba(20,20,20,0.95); 
             border: 1px solid #333; 
             box-shadow: 0 4px 15px rgba(0,0,0,0.5); 
             z-index: 10; 
+            box-sizing: border-box;
         }
         
-        #controls { top: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 220px; }
-        #report { bottom: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 480px; max-height: 70vh; overflow-y: auto; }
+        /* Desktop Styles */
+        @media (min-width: 768px) {
+            #controls { position: absolute; top: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 220px; }
+            #report { position: absolute; bottom: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 480px; max-height: 40vh; overflow-y: auto; }
+        }
+
+        /* Mobile Styles */
+        @media (max-width: 767px) {
+            #controls { width: 100%; padding: 10px; border-radius: 0; }
+            #report { width: 100%; max-height: 35vh; border-radius: 0; }
+            .panel-header { font-size: 0.9em; }
+        }
 
         .panel-header { 
             display: flex; 
@@ -223,11 +252,20 @@ def write_html_file():
         }
         .panel-header:hover { color: #00d4ff; }
         .collapsed .panel-content { display: none; }
-        .collapsed { padding: 5px 15px !important; width: auto !important; }
+        .collapsed { padding: 8px 15px !important; }
         .collapsed .panel-header { margin-bottom: 0; }
 
-        canvas { cursor: crosshair; display: block; }
-        select, input { background: #222; color: #fff; border: 1px solid #444; padding: 6px; margin: 8px 0; width: 100%; border-radius: 4px; }
+        canvas { cursor: crosshair; display: block; touch-action: none; }
+        select, input { 
+            background: #222; 
+            color: #fff; 
+            border: 1px solid #444; 
+            padding: 12px; /* Larger tap target for mobile */
+            margin: 8px 0; 
+            width: 100%; 
+            border-radius: 4px; 
+            font-size: 16px; /* Prevents iOS zoom on focus */
+        }
         .stat { font-weight: bold; color: #00d4ff; }
         .verse-text { font-style: italic; color: #eee; line-height: 1.4; display: block; margin: 5px 0; font-size: 0.9em; white-space: pre-wrap; }
         .sim-label { color: #00d4ff; font-size: 0.85em; font-weight: bold; }
@@ -268,6 +306,10 @@ def write_html_file():
     </div>
 </div>
 
+<div id="viz-container">
+    <canvas id="viz"></canvas>
+</div>
+
 <div id="report">
     <div class="panel-header" onclick="togglePanel('report')">
         <label>Semantic Report</label>
@@ -277,8 +319,6 @@ def write_html_file():
         <div id="reportContent">Loading semantic data...</div>
     </div>
 </div>
-
-<canvas id="viz"></canvas>
 
 <script>
 let width, height, centerX, centerY;
@@ -346,7 +386,14 @@ function init() {
         updateViz(); 
     });
 
+    // Handle both Mouse and Touch
     canvas.addEventListener('click', handleCanvasClick);
+    canvas.addEventListener('touchstart', function(e) {
+        // Prevent scrolling while interacting with the map
+        if (e.touches.length === 1) {
+            handleCanvasClick(e.changedTouches[0]);
+        }
+    }, {passive: true});
 
     window.addEventListener('resize', resize);
     resize();
@@ -371,7 +418,7 @@ function handleCanvasClick(e) {
             const dx = mouseX - n.x;
             const dy = mouseY - n.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-            const radius = n.type === 'chapter' ? 5 : 3; 
+            const radius = n.type === 'chapter' ? 10 : 6; // Increased hit area for mobile
             if (dist < radius) {
                 clickedNode = n;
                 break;
@@ -381,11 +428,10 @@ function handleCanvasClick(e) {
 
     if (clickedNode) {
         activeNodeId = clickedNode.id;
-        updateViz();
     } else {
         activeNodeId = null;
-        updateViz();
     }
+    updateViz();
 }
 
 function updateChapterDropdown() {
@@ -405,9 +451,20 @@ function updateChapterDropdown() {
 }
 
 function resize() {
-    width = window.innerWidth; height = window.innerHeight;
-    canvas.width = width; canvas.height = height;
-    centerX = width / 2; centerY = height / 2;
+    const container = document.getElementById('viz-container');
+    width = container.clientWidth; 
+    height = container.clientHeight;
+    
+    // Handle High DPI screens
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.scale(dpr, dpr);
+
+    centerX = width / 2; 
+    centerY = height / 2;
     updateViz();
 }
 
@@ -489,7 +546,6 @@ function updateViz() {
     const connectionCountPerVerse = new Map();
     for (let i = 0; i < connections.length; i++) {
         const c = connections[i];
-        // If a node is selected, only show connections involving that node
         const matchesSelection = activeNodeId ? (c.s === activeNodeId || c.t === activeNodeId) : true;
         
         if ( ( visibleNodeIds.has(c.s) || visibleNodeIds.has(c.t) ) && matchesSelection) {
