@@ -204,8 +204,33 @@ def write_html_file():
     <script src="map_data.js"></script>
     <style>
         body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
-        #controls { position: absolute; top: 10px; left: 10px; background: rgba(20,20,20,0.85); padding: 15px; border-radius: 8px; z-index: 10; width: 220px; border: 1px solid #333; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        #report { position: absolute; bottom: 10px; left: 10px; background: rgba(20,20,20,0.9); padding: 15px; border-radius: 8px; width: 480px; max-height: 70vh; overflow-y: auto; z-index: 10; border: 1px solid #444; box-shadow: 0 -4px 15px rgba(0,0,0,0.5); }
+        
+        /* UI Containers */
+        #controls, #report { 
+            position: absolute; 
+            background: rgba(20,20,20,0.9); 
+            border: 1px solid #333; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5); 
+            z-index: 10; 
+        }
+        
+        #controls { top: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 220px; }
+        #report { bottom: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 480px; max-height: 70vh; overflow-y: auto; }
+
+        /* Collapsible Logic */
+        .panel-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            cursor: pointer; 
+            user-select: none;
+            margin-bottom: 10px;
+        }
+        .panel-header:hover { color: #00d4ff; }
+        .collapsed .panel-content { display: none; }
+        .collapsed { padding: 5px 15px !important; width: auto !important; }
+        .collapsed .panel-header { margin-bottom: 0; }
+
         canvas { cursor: crosshair; display: block; }
         select, input { background: #222; color: #fff; border: 1px solid #444; padding: 6px; margin: 8px 0; width: 100%; border-radius: 4px; }
         .stat { font-weight: bold; color: #00d4ff; }
@@ -215,31 +240,49 @@ def write_html_file():
         hr { border: 0; border-top: 1px solid #333; margin: 10px 0; }
         label { font-size: 0.85em; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
         .hidden { display: none; }
+        .selected-node-info { color: #ff00ff; font-size: 0.8em; margin-bottom: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
-<div id="controls">
-    <label>Filter Book</label>
-    <select id="bookFilter"><option value="all">All Books</option></select>
-    
-    <div id="drilldownContainer" class="hidden">
-        <label>Drill Down: Chapter</label>
-        <select id="chapterFilter"><option value="all">All Chapters</option></select>
-    </div >
 
-    <div id="bookStats"></div >
-    <hr>
-    <label>View Mode</label>
-    <select id="viewMode">
-        <option value="all">All (Mixed)</option>
-        <option value="chapter">Chapters Only</option>
-        <option value="verse">Verses Only</option>
-    </select>
-    <hr>
-    <label>Connections (K)</label>
-    <input type="number" id="kFilter" value="3" min="1" max="50">
-</div >
-<div id="report"><div id="reportContent">Loading semantic data</div ></div >
+<div id="controls">
+    <div class="panel-header" onclick="togglePanel('controls')">
+        <label>Filters</label>
+        <span>&#x25BC;</span>
+    </div>
+    <div class="panel-content">
+        <label>Filter Book</label>
+        <select id="bookFilter"><option value="all">All Books</option></select>
+        
+        <div id="drilldownContainer" class="hidden">
+            <label>Drill Down: Chapter</label>
+            <select id="chapterFilter"><option value="all">All Chapters</option></select>
+        </div>
+
+        <div id="bookStats"></div>
+        <hr>
+        <label>View Mode</label>
+        <select id="viewMode">
+            <option value="all">All (Mixed)</option>
+            <option value="chapter">Chapters Only</option>
+            <option value="verse">Verses Only</option>
+        </select>
+        <hr>
+        <label>Connections (K)</label>
+        <input type="number" id="kFilter" value="3" min="1" max="50">
+    </div>
+</div>
+
+<div id="report">
+    <div class="panel-header" onclick="togglePanel('report')">
+        <label>Semantic Report</label>
+        <span>&#x25BC;</span>
+    </div>
+    <div class="panel-content">
+        <div id="reportContent">Loading semantic data...</div>
+    </div>
+</div>
+
 <canvas id="viz"></canvas>
 
 <script>
@@ -248,6 +291,11 @@ const canvas = document.getElementById('viz');
 const ctx = canvas.getContext('2d');
 let nodes = [], nodeMap = new Map(), filteredConnections = [];
 let selectedBook = 'all', selectedChapter = 'all', viewMode = 'all', topK = 3;
+let activeNodeId = null;
+
+function togglePanel(id) {
+    document.getElementById(id).classList.toggle('collapsed');
+}
 
 function init() {
     if (typeof bibleData === 'undefined' || typeof connections === 'undefined') {
@@ -257,30 +305,19 @@ function init() {
 
     const books = Object.keys(bibleData);
     const bookList = d3.select("#bookFilter");
-    const chapterList = d3.select("#chapterFilter");
-    const drilldownContainer = document.getElementById('drilldownContainer');
-
+    
     books.forEach(book => {
         bookList.append("option").attr("value", book).text(book);
-        
         const chapters = Object.keys(bibleData[book]);
         chapters.forEach(ch => {
             const chapterVerses = bibleData[book][ch];
             const chapterFullText = Object.values(chapterVerses).join(" ");
-
             const chapterId = `${book}_${ch}`;
-            const chapterNode = { 
-                id: chapterId, 
-                book, 
-                chapter: ch, 
-                type: 'chapter', 
-                text: chapterFullText 
-            };
+            const chapterNode = { id: chapterId, book, chapter: ch, type: 'chapter', text: chapterFullText };
             nodes.push(chapterNode);
             nodeMap.set(chapterId, chapterNode);
 
-            const verses = Object.keys(chapterVerses);
-            verses.forEach(vs => {
+            Object.keys(chapterVerses).forEach(vs => {
                 const id = `${book}_${ch}_${vs}`;
                 const node = { id, book, chapter: ch, verse: vs, text: chapterVerses[vs], type: 'verse' };
                 nodes.push(node);
@@ -293,16 +330,19 @@ function init() {
         selectedBook = this.value; 
         updateChapterDropdown();
         updateStats(); 
+        activeNodeId = null;
         updateViz(); 
     });
 
     d3.select("#chapterFilter").on("change", function() {
         selectedChapter = this.value;
+        activeNodeId = null;
         updateViz();
     });
 
     d3.select("#viewMode").on("change", function() {
         viewMode = this.value;
+        activeNodeId = null;
         updateViz();
     });
 
@@ -311,6 +351,8 @@ function init() {
         updateViz(); 
     });
 
+    canvas.addEventListener('click', handleCanvasClick);
+
     window.addEventListener('resize', resize);
     resize();
     updateChapterDropdown();
@@ -318,19 +360,52 @@ function init() {
     updateViz();
 }
 
+function handleCanvasClick(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    let clickedNode = null;
+    // Check nodes (reverse order to pick top-most/latest)
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
+        // Only click if visible
+        const isVisible = (selectedBook === 'all' || n.book === selectedBook) &&
+                          (selectedChapter === 'all' || n.chapter === selectedChapter) &&
+                          (viewMode === 'all' || (viewMode === 'chapter' ? n.type === 'chapter' : n.type === 'verse'));
+        
+        if (isVisible) {
+            const dx = mouseX - n.x;
+            const dy = mouseY - n.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const radius = n.type === 'chapter' ? 5 : 3; // Larger hit area for clicking
+            if (dist < radius) {
+                clickedNode = n;
+                break;
+            }
+        }
+    }
+
+    if (clickedNode) {
+        activeNodeId = clickedNode.id;
+        updateViz();
+    } else {
+        activeNodeId = null;
+        updateViz();
+    }
+}
+
 function updateChapterDropdown() {
     const chapterList = d3.select("#chapterFilter");
     const drilldownContainer = document.getElementById('drilldownContainer');
     chapterList.html('<option value="all">All Chapters</option>');
-    
     if (selectedBook === 'all') {
         drilldownContainer.classList.add('hidden');
         selectedChapter = 'all';
     } else {
         drilldownContainer.classList.remove('hidden');
         selectedChapter = 'all';
-        const chapters = Object.keys(bibleData[selectedBook]);
-        chapters.forEach(ch => {
+        Object.keys(bibleData[selectedBook]).forEach(ch => {
             chapterList.append("option").attr("value", ch).text(`Chapter ${ch}`);
         });
     }
@@ -388,17 +463,14 @@ function updateViz() {
     nodes.forEach(n => {
         const bData = bookSpokeData.find(b => b.name === n.book);
         if (!bData) return;
-        
         let vIdxInBook;
         const bookVerses = bookNodeGroups.get(n.book).filter(v => v.type === 'verse');
-        
         if (n.type === 'verse') {
             vIdxInBook = bookVerses.findIndex(v => v.id === n.id);
         } else {
             const firstVerse = bookVerses.find(v => v.chapter === n.chapter);
             vIdxInBook = bookVerses.indexOf(firstVerse);
         }
-
         const spokeWithinBook = vIdxInBook % bData.spokeCount;
         const globalSpokeIndex = bookSpokeOffsets.get(n.book) + spokeWithinBook;
         const angle = globalSpokeIndex * spokeAngleStep;
@@ -415,7 +487,6 @@ function updateViz() {
         let typeMatch = true;
         if (viewMode === 'chapter') typeMatch = (n.type === 'chapter');
         else if (viewMode === 'verse') typeMatch = (n.type === 'verse');
-        
         return bookMatch && chapterMatch && typeMatch;
     });
 
@@ -425,7 +496,10 @@ function updateViz() {
     const connectionCountPerVerse = new Map();
     for (let i = 0; i < connections.length; i++) {
         const c = connections[i];
-        if (visibleNodeIds.has(c.s) && visibleNodeIds.has(c.t)) {
+        // If a node is selected, only show connections involving that node
+        const matchesSelection = activeNodeId ? (c.s === activeNodeId || c.t === activeNodeId) : true;
+        
+        if (visibleNodeIds.has(c.s) && visibleNodeIds.has(c.t) && matchesSelection) {
             const sCount = connectionCountPerVerse.get(c.s) || 0;
             const tCount = connectionCountPerVerse.get(c.t) || 0;
             if (sCount < topK && tCount < topK) {
@@ -457,7 +531,14 @@ function updateViz() {
             ctx.arc(n.x, n.y, 1, 0, Math.PI * 2);
             ctx.fillStyle = n.bookColor || "#ffffff"; 
         }
+        // Highlight selected node
+        if (n.id === activeNodeId) {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#fff";
+            ctx.arc(n.x, n.y, n.type === 'chapter' ? 5 : 2.5, 0, Math.PI * 2);
+        }
         ctx.fill();
+        ctx.shadowBlur = 0;
     });
 
     ctx.font = "bold 11px Arial"; ctx.textAlign = "center";
@@ -472,16 +553,25 @@ function updateViz() {
         runningSpokeCount += b.spokeCount;
     });
 
-    generateReport(validConnections);
+    generateReport(validConnections, activeNodeId);
 }
 
-function generateReport(currentSet) {
+function generateReport(currentSet, filterId) {
     const reportDiv = document.getElementById('reportContent');
     if (currentSet.length === 0) { reportDiv.innerHTML = "No connections to display."; return; }
+    
     const filteredAndSorted = currentSet.filter(c => c.sim < 1).sort((a, b) => b.sim - a.sim);
     if (filteredAndSorted.length === 0) { reportDiv.innerHTML = "No non-identical matches found."; return; }
-    let html = `<span class="line-count">Displaying ${filteredAndSorted.length.toLocaleString()} unique matches</span>`;
+    
+    let html = "";
+    if (filterId) {
+        const fn = nodeMap.get(filterId);
+        html += `<div class="selected-node-info">Showing connections for: ${fn.book} ${fn.type === 'chapter' ? 'Ch ' + fn.chapter : fn.chapter + ':' + fn.verse}</div>`;
+    }
+
+    html += `<span class="line-count">Displaying ${filteredAndSorted.length.toLocaleString()} unique matches</span>`;
     html += `<div style="color: #00d4ff; font-size: 0.8em; margin-bottom: 5px; text-transform: uppercase;">Top 20 Most Similar Pairs</div>`;
+    
     const limit = Math.min(filteredAndSorted.length, 20);
     for(let i = 0; i < limit; i++) {
         const c = filteredAndSorted[i];
