@@ -9,7 +9,6 @@
     <style>
         body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
         
-        /* UI Containers */
         #controls, #report { 
             position: absolute; 
             background: rgba(20,20,20,0.9); 
@@ -21,7 +20,6 @@
         #controls { top: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 220px; }
         #report { bottom: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 480px; max-height: 70vh; overflow-y: auto; }
 
-        /* Collapsible Logic */
         .panel-header { 
             display: flex; 
             justify-content: space-between; 
@@ -170,10 +168,8 @@ function handleCanvasClick(e) {
     const mouseY = e.clientY - rect.top;
 
     let clickedNode = null;
-    // Check nodes (reverse order to pick top-most/latest)
     for (let i = nodes.length - 1; i >= 0; i--) {
         const n = nodes[i];
-        // Only click if visible
         const isVisible = (selectedBook === 'all' || n.book === selectedBook) &&
                           (selectedChapter === 'all' || n.chapter === selectedChapter) &&
                           (viewMode === 'all' || (viewMode === 'chapter' ? n.type === 'chapter' : n.type === 'verse'));
@@ -182,7 +178,7 @@ function handleCanvasClick(e) {
             const dx = mouseX - n.x;
             const dy = mouseY - n.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-            const radius = n.type === 'chapter' ? 5 : 3; // Larger hit area for clicking
+            const radius = n.type === 'chapter' ? 5 : 3; 
             if (dist < radius) {
                 clickedNode = n;
                 break;
@@ -303,7 +299,9 @@ function updateViz() {
         // If a node is selected, only show connections involving that node
         const matchesSelection = activeNodeId ? (c.s === activeNodeId || c.t === activeNodeId) : true;
         
-        if (visibleNodeIds.has(c.s) && visibleNodeIds.has(c.t) && matchesSelection) {
+        // if (visibleNodeIds.has(c.s) && visibleNodeIds.has(c.t) && matchesSelection) {
+        // if (matchesSelection) {
+        if ( ( visibleNodeIds.has(c.s) || visibleNodeIds.has(c.t) ) && matchesSelection) {
             const sCount = connectionCountPerVerse.get(c.s) || 0;
             const tCount = connectionCountPerVerse.get(c.t) || 0;
             if (sCount < topK && tCount < topK) {
@@ -335,7 +333,6 @@ function updateViz() {
             ctx.arc(n.x, n.y, 1, 0, Math.PI * 2);
             ctx.fillStyle = n.bookColor || "#ffffff"; 
         }
-        // Highlight selected node
         if (n.id === activeNodeId) {
             ctx.shadowBlur = 10;
             ctx.shadowColor = "#fff";

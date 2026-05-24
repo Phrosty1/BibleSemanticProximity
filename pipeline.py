@@ -48,7 +48,6 @@ def build_vector_db():
     print("Parsing JSON and preparing vectors")
     for book, chapters in bible_data.items():
         for chapter_num, verses in chapters.items():
-            # First, collect all verse data for this chapter
             chapter_text_parts = []
             
             for verse_num, text in verses.items():
@@ -64,7 +63,6 @@ def build_vector_db():
                 })
                 chapter_text_parts.append(text)
             
-            # Second, create the Chapter-level entry by concatenating all verses in this chapter
             chapter_id = f"{book}_{chapter_num}"
             chapter_full_text = " ".join(chapter_text_parts)
             ids.append(chapter_id)
@@ -72,7 +70,7 @@ def build_vector_db():
             metadatas.append({
                 "book": book,
                 "chapter": str(chapter_num),
-                "verse": "0", # Marker for chapter level
+                "verse": "0", 
                 "text": chapter_full_text,
                 "type": "chapter"
             })
@@ -136,7 +134,6 @@ def generate_proximity_map():
             target_meta = metadatas[idx]
             target_book = target_meta['book']
             
-            # We only want cross-book connections
             if target_book == current_book: continue
             if found_count >= TOP_K: break
             
@@ -205,7 +202,6 @@ def write_html_file():
     <style>
         body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
         
-        /* UI Containers */
         #controls, #report { 
             position: absolute; 
             background: rgba(20,20,20,0.9); 
@@ -217,7 +213,6 @@ def write_html_file():
         #controls { top: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 220px; }
         #report { bottom: 10px; left: 10px; padding: 15px; border-radius: 8px; width: 480px; max-height: 70vh; overflow-y: auto; }
 
-        /* Collapsible Logic */
         .panel-header { 
             display: flex; 
             justify-content: space-between; 
@@ -366,10 +361,8 @@ function handleCanvasClick(e) {
     const mouseY = e.clientY - rect.top;
 
     let clickedNode = null;
-    // Check nodes (reverse order to pick top-most/latest)
     for (let i = nodes.length - 1; i >= 0; i--) {
         const n = nodes[i];
-        // Only click if visible
         const isVisible = (selectedBook === 'all' || n.book === selectedBook) &&
                           (selectedChapter === 'all' || n.chapter === selectedChapter) &&
                           (viewMode === 'all' || (viewMode === 'chapter' ? n.type === 'chapter' : n.type === 'verse'));
@@ -378,7 +371,7 @@ function handleCanvasClick(e) {
             const dx = mouseX - n.x;
             const dy = mouseY - n.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-            const radius = n.type === 'chapter' ? 5 : 3; // Larger hit area for clicking
+            const radius = n.type === 'chapter' ? 5 : 3; 
             if (dist < radius) {
                 clickedNode = n;
                 break;
@@ -499,7 +492,7 @@ function updateViz() {
         // If a node is selected, only show connections involving that node
         const matchesSelection = activeNodeId ? (c.s === activeNodeId || c.t === activeNodeId) : true;
         
-        if (visibleNodeIds.has(c.s) && visibleNodeIds.has(c.t) && matchesSelection) {
+        if ( ( visibleNodeIds.has(c.s) || visibleNodeIds.has(c.t) ) && matchesSelection) {
             const sCount = connectionCountPerVerse.get(c.s) || 0;
             const tCount = connectionCountPerVerse.get(c.t) || 0;
             if (sCount < topK && tCount < topK) {
@@ -531,7 +524,6 @@ function updateViz() {
             ctx.arc(n.x, n.y, 1, 0, Math.PI * 2);
             ctx.fillStyle = n.bookColor || "#ffffff"; 
         }
-        // Highlight selected node
         if (n.id === activeNodeId) {
             ctx.shadowBlur = 10;
             ctx.shadowColor = "#fff";
